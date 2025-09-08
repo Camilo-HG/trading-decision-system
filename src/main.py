@@ -12,16 +12,20 @@ from redis.exceptions import ConnectionError
 
 # Pydantic models for request and response data
 class InsightResponse(BaseModel):
-    signal: str
+    signal: int
     conviction: float
     causality: str
-    sentiment_score: float
-    key_market_drivers: str
-    risk_score: float
-    event_timestamp: str
+    # sentiment_score: float
+    # key_market_drivers: str
+    # risk_score: float
+    event_timestamp: str # Changed to str to match Redis data format
 
 class LatestEventResponse(BaseModel):
-    event_timestamp: str
+    event_timestamp: str # Changed to str to match Redis data format
+
+class DecisionResponse(BaseModel):
+    asset_ticker: str
+    time_difference_seconds: float
 
 app = FastAPI()
 
@@ -49,8 +53,8 @@ def get_redis_client():
             return None
     return redis_client
 
-# Helper function to get the latest event timestamp
-def get_latest_event_timestamp(asset_ticker: str) -> str:
+# Helper functions to retrieve data from Redis
+def get_latest_event_timestamp_from_db(asset_ticker: str) -> str:
     """
     Performs a lookup in Redis for the latest event timestamp for a given asset.
     """
@@ -75,20 +79,10 @@ def get_latest_event_timestamp(asset_ticker: str) -> str:
             detail="Redis connection failed."
         )
 
-# API Endpoints
-@app.get("/{asset_ticker}/latest_event_timestamp", response_model=LatestEventResponse)
-async def get_latest_event(asset_ticker: str):
+def get_latest_insight_from_db(asset_ticker: str) -> InsightResponse:
     """
-    Retrieves the latest event timestamp for a given asset ticker.
-    """
-    event_timestamp = get_latest_event_timestamp(asset_ticker)
-    return LatestEventResponse(event_timestamp=event_timestamp)
-
-@app.get("/insights/{asset_ticker}/latest", response_model=InsightResponse)
-async def get_insights(asset_ticker: str):
-    """
-    Retrieves the full pre-computed insight for a given asset ticker.
-    This endpoint uses the latest event timestamp to perform a second lookup.
+    Retrieves the full pre-computed latest insight for a given asset ticker.
+    This helper function is used by multiple endpoints to avoid routing issues.
     """
     redis_client = get_redis_client()
     if not redis_client:
@@ -99,7 +93,7 @@ async def get_insights(asset_ticker: str):
 
     try:
         # Use the helper function to get the latest timestamp
-        latest_timestamp = get_latest_event_timestamp(asset_ticker)
+        latest_timestamp = get_latest_event_timestamp_from_db(asset_ticker)
         
         # Use the timestamp to get the full insight data
         insight_key = f"{asset_ticker}:{latest_timestamp}"
@@ -125,8 +119,26 @@ async def get_insights(asset_ticker: str):
     else:
         return InsightResponse(**insight_data)
 
+# API Endpoints
+@app.get("/{asset_ticker}/latest_event_timestamp", response_model=LatestEventResponse)
+async def get_latest_event(asset_ticker: str):
+    """
+    Retrieves the latest event timestamp for a given asset ticker.
+    """
+    event_timestamp = get_latest_event_timestamp_from_db(asset_ticker)
+    return LatestEventResponse(event_timestamp=event_timestamp)
+
+@app.get("/insights/{asset_ticker}/latest", response_model=InsightResponse)
+async def get_insights_latest(asset_ticker: str):
+    """
+    Retrieves the full pre-computed insight for a given asset ticker.
+    This endpoint uses the latest event timestamp to perform a second lookup.
+    """
+    return get_latest_insight_from_db(asset_ticker)
+
+
 @app.get("/insights/{asset_ticker}/{event_timestamp}", response_model=InsightResponse)
-async def get_insights(asset_ticker: str, event_timestamp: datetime):
+async def get_insights_by_timestamp(asset_ticker: str, event_timestamp: datetime):
     """
     Retrieves the full pre-computed insight for a given asset ticker and event timestamp.
     This endpoint uses the provided event timestamp to perform a second lookup.
@@ -144,19 +156,19 @@ async def get_insights(asset_ticker: str, event_timestamp: datetime):
 
     # Redis stores timestamps in Unix epoch timestamp (integer)
     # Change provided event_timestamp string to integer
-    event_timestamp = int(event_timestamp.timestamp())
+    event_timestamp_unix = int(event_timestamp.timestamp())
 
     try:
         # Use the timestamp to get the full insight data
-        insight_key = f"{asset_ticker}:{event_timestamp}"
+        insight_key = f"{asset_ticker}:{event_timestamp_unix}"
         insight_data_bytes = redis_client.get(insight_key)
-        
+
         if not insight_data_bytes:
             raise HTTPException(
                 status_code=404,
                 detail=f"Insight data not found for key: {insight_key}"
             )
-            
+
         insight_data = json.loads(insight_data_bytes)
     except ConnectionError:
         raise HTTPException(
@@ -170,6 +182,29 @@ async def get_insights(asset_ticker: str, event_timestamp: datetime):
         )
     else:
         return InsightResponse(**insight_data)
+
+@app.get("/decide/{asset_ticker}", response_model=DecisionResponse)
+async def get_decision_metrics(asset_ticker: str):
+    """
+    Returns the time difference between the current time and the latest event timestamp.
+    """
+    # Call the new helper function to get the latest insights
+    try:
+        insights = get_latest_insight_from_db(asset_ticker)
+    except HTTPException as e:
+        # Pass through the error from the insights endpoint
+        raise e
+
+    # Calculate the time difference
+    # event_timestamp from insights is a string, so we cast it to int before converting to datetime
+    latest_event_time = datetime.strptime(insights.event_timestamp, "%Y-%m-%dT%H:%M:%S")
+    current_time = datetime.now()
+    time_difference = (current_time - latest_event_time).total_seconds()
+
+    return DecisionResponse(
+        asset_ticker=asset_ticker,
+        time_difference_seconds=time_difference
+    )
 
 # Metrics endpoint for Prometheus.
 @app.get("/metrics")

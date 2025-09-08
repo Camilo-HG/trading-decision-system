@@ -6,7 +6,7 @@ Challenge:
 >  
 > - **Redis** — cache for pre-computed features or agent outputs.  (Find them in the data folder)
 > - **Trading API** — FastAPI service that:  
->   - `POST /decide` returns a trading decision in <500ms.  
+>   - `GET /decide` returns a trading decision in <500ms.  
 >   - Uses cached/pre-computed values (simulate LLM outputs or use the ones in the data folder).
 >   - Use prices data from the folder as aditional indicators or to make hybrid vectors.
 >   - Includes latency, model version, cache hit/miss, fallback info.
