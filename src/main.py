@@ -1,6 +1,7 @@
 import json
 import os
 from typing import Optional
+from datetime import datetime
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
@@ -75,7 +76,7 @@ def get_latest_event_timestamp(asset_ticker: str) -> str:
         )
 
 # API Endpoints
-@app.get("/{asset_ticker}/latest_event", response_model=LatestEventResponse)
+@app.get("/{asset_ticker}/latest_event_timestamp", response_model=LatestEventResponse)
 async def get_latest_event(asset_ticker: str):
     """
     Retrieves the latest event timestamp for a given asset ticker.
@@ -83,7 +84,7 @@ async def get_latest_event(asset_ticker: str):
     event_timestamp = get_latest_event_timestamp(asset_ticker)
     return LatestEventResponse(event_timestamp=event_timestamp)
 
-@app.get("/insights/{asset_ticker}", response_model=InsightResponse)
+@app.get("/insights/{asset_ticker}/latest", response_model=InsightResponse)
 async def get_insights(asset_ticker: str):
     """
     Retrieves the full pre-computed insight for a given asset ticker.
@@ -102,6 +103,51 @@ async def get_insights(asset_ticker: str):
         
         # Use the timestamp to get the full insight data
         insight_key = f"{asset_ticker}:{latest_timestamp}"
+        insight_data_bytes = redis_client.get(insight_key)
+        
+        if not insight_data_bytes:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Insight data not found for key: {insight_key}"
+            )
+            
+        insight_data = json.loads(insight_data_bytes)
+    except ConnectionError:
+        raise HTTPException(
+            status_code=503,
+            detail="Redis connection failed."
+        )
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=500,
+            detail="Error decoding JSON from Redis."
+        )
+    else:
+        return InsightResponse(**insight_data)
+
+@app.get("/insights/{asset_ticker}/{event_timestamp}", response_model=InsightResponse)
+async def get_insights(asset_ticker: str, event_timestamp: datetime):
+    """
+    Retrieves the full pre-computed insight for a given asset ticker.
+    This endpoint uses the latest event timestamp to perform a second lookup.
+    """
+    redis_client = get_redis_client()
+    if not redis_client:
+        raise HTTPException(
+            status_code=503,
+            detail="Redis cache service is unavailable."
+        )
+    
+    # Check the format of event_timestamp
+    # The API expects event_timestamp in format "%Y-%m-%d %H:%M:%S" (e.g., "2023-10-05 14:48:00")
+
+    # Redis stores timestamps in Unix epoch timestamp (integer)
+    # Change provided event_timestamp string to integer
+    event_timestamp = int(event_timestamp.timestamp())
+
+    try:
+        # Use the timestamp to get the full insight data
+        insight_key = f"{asset_ticker}:{event_timestamp}"
         insight_data_bytes = redis_client.get(insight_key)
         
         if not insight_data_bytes:
