@@ -115,11 +115,6 @@ After the command completes, one can check the status of the services by running
 
 ```shell
 docker-compose ps
-````
+```
 
 The FastAPI service will be accessible at http://localhost:8000, and the Prometheus dashboard will be available at http://localhost:9090.
-
-
-
-
-
