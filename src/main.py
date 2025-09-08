@@ -15,13 +15,14 @@ class InsightResponse(BaseModel):
     signal: int
     conviction: float
     causality: str
+    event_timestamp: str # ISO 8601 format
+    # NOTE: Not included for now since df_events.parquet does not have these columns.
     # sentiment_score: float
     # key_market_drivers: str
     # risk_score: float
-    event_timestamp: str # Changed to str to match Redis data format
 
 class LatestEventResponse(BaseModel):
-    event_timestamp: str # Changed to str to match Redis data format
+    event_timestamp: str # ISO 8601 format
 
 class DecisionResponse(BaseModel):
     asset_ticker: str
