@@ -1,0 +1,28 @@
+[project]
+name = "trading-decision-system"
+version = "0.1.0"
+description = "Project for a high-performance trading decision system"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.116.1",
+    "jupyterlab>=4.4.7",
+    "loguru>=0.7.3",
+    "pandas>=2.3.2",
+    "prometheus-client>=0.22.1",
+    "pyarrow>=21.0.0",
+    "redis>=6.4.0",
+    "uvicorn>=0.35.0",
+    "uvloop>=0.21.0",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+lint.select = [
+"F", "E", "W", "I", "C90", "N", "D",
+"B", "A", "C4", "ISC", "S", "T", "UP",
+"P", "PL", "PT", "PTH", "Q", "RET",
+"SIM", "TID", "TCH", "ICN", "G", "INP",
+"PIE", "RSE", "RUF", "SLF", "ANN"
+]

@@ -1,0 +1,124 @@
+[
+  {
+    "name": "1. Slow-Path Ingestion",
+    "tasks": [
+      {
+        "task_key": "ingestion_task",
+        "description": "Ingests raw data from sources and writes to a landing zone.",
+        "notebook_task": {
+          "notebook_path": "/notebooks/ingestion.py",
+          "base_parameters": {
+            "landing_zone_path": "s3://your-bucket/trading-data-raw/landing_zone"
+          }
+        },
+        "job_cluster_key": "ingestion_cluster"
+      }
+    ],
+    "job_clusters": [
+      {
+        "job_cluster_key": "ingestion_cluster",
+        "new_cluster": {
+          "spark_version": "13.3.x-scala2.12",
+          "node_type_id": "i3.xlarge",
+          "autoscale": {
+            "min_workers": 1,
+            "max_workers": 4
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "2. Slow-Path Normalization",
+    "tasks": [
+      {
+        "task_key": "normalization_task",
+        "description": "Populates the Bronze and Silver Delta tables from the landing zone.",
+        "notebook_task": {
+          "notebook_path": "/notebooks/normalization.py",
+          "base_parameters": {
+            "landing_zone_path": "s3://your-bucket/trading-data-raw/landing_zone",
+            "bronze_table_name": "bronze_news",
+            "silver_table_name": "silver_normalized_news"
+          }
+        },
+        "job_cluster_key": "normalization_cluster"
+      }
+    ],
+    "job_clusters": [
+      {
+        "job_cluster_key": "normalization_cluster",
+        "new_cluster": {
+          "spark_version": "13.3.x-scala2.12",
+          "node_type_id": "i3.xlarge",
+          "autoscale": {
+            "min_workers": 1,
+            "max_workers": 4
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "3. Slow-Path Enrichment",
+    "tasks": [
+      {
+        "task_key": "enrichment_task",
+        "description": "Enriches data with parallel LLM agent calls and writes to the Gold Delta table.",
+        "notebook_task": {
+          "notebook_path": "/notebooks/enrichment.py",
+          "base_parameters": {
+            "silver_table_name": "silver_normalized_news",
+            "gold_table_name": "gold_enriched_insights"
+          }
+        },
+        "job_cluster_key": "enrichment_cluster"
+      }
+    ],
+    "job_clusters": [
+      {
+        "job_cluster_key": "enrichment_cluster",
+        "new_cluster": {
+          "spark_version": "13.3.x-scala2.12",
+          "node_type_id": "i3.xlarge",
+          "autoscale": {
+            "min_workers": 1,
+            "max_workers": 4
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "4. Slow-Path Cache Warming",
+    "tasks": [
+      {
+        "task_key": "cache_warming_task",
+        "description": "Streams pre-computed insights from the Gold table to the Redis cache.",
+        "notebook_task": {
+          "notebook_path": "/notebooks/cache_warning.py",
+          "base_parameters": {
+            "gold_table_name": "gold_enriched_insights",
+            "checkpoint_location": "s3://your-bucket/checkpoints/cache_warming",
+            "redis_host": "your-redis-host",
+            "redis_port": "6379"
+          }
+        },
+        "job_cluster_key": "cache_warming_cluster"
+      }
+    ],
+    "job_clusters": [
+      {
+        "job_cluster_key": "cache_warming_cluster",
+        "new_cluster": {
+          "spark_version": "13.3.x-scala2.12",
+          "node_type_id": "i3.xlarge",
+          "autoscale": {
+            "min_workers": 1,
+            "max_workers": 4
+          }
+        }
+      }
+    ]
+  }
+]

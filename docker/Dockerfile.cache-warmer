@@ -1,0 +1,24 @@
+# Start with a Python base image. Python 3.13 is used as requested.
+FROM python:3.13-slim-buster
+
+# Set the working directory inside the container
+WORKDIR /app
+
+# Install uv for dependency management
+RUN apt-get update && apt-get install -y curl && \
+    curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    ln -s /root/.cargo/bin/uv /usr/local/bin/uv && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Copy the pyproject.toml file and install dependencies
+# We use a two-stage process for caching optimization
+COPY pyproject.toml .
+RUN uv sync
+
+# Copy the cache warmer script and data
+# The volumes in docker-compose will mount these over later, but we need them for the build
+COPY scripts/script_cache_warmer.py /app/script_cache_warmer.py
+COPY data/df_events.parquet /app/data/df_events.parquet
+
+# Command to run the cache warming script
+CMD ["python", "script_cache_warmer.py"]

@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7.2.5-alpine3.19
+    container_name: redis
+    command: redis-server --save 60 1 --appendonly no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+
+  cache-warmer:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile.cache-warmer
+    container_name: cache-warmer
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../scripts:/scripts
+      - ../data:/data
+    env_file:
+      - ../.env
+    command: python /scripts/script_cache_warmer.py
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
+  fastapi:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile.fastapi
+    container_name: fastapi
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../src:/src
+      - ../data:/data
+    env_file:
+      - ../.env
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 1G
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    command: --config.file=/etc/prometheus/prometheus.yml
+    depends_on:
+      - fastapi
