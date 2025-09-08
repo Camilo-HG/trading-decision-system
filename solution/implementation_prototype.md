@@ -48,6 +48,12 @@ The project has the following files:
     - **Faster Installations**
       - When `uv.lock` is present, `uv` can directly install the locked dependencies without needing to perform a full dependency resolution, leading to faster environment setups.
 
+> [!WARNING]
+>
+> There is a conflict with Docker `python:python:3.12-slim` image and `uv` installation.
+
+TODO: Solve this issue.
+
 - **Docker Compose**
 
   - `docker/docker-compose.yml`:

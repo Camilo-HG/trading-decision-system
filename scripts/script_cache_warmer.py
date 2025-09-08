@@ -37,6 +37,10 @@ def load_data_to_redis(df: pd.DataFrame, redis_client: redis.StrictRedis):
         # are not included for now since df_events.parquet
         # does not have these columns.
         # They can be added later when available.
+        
+        # Convert the pandas Timestamp object to a string for JSON serialization
+        event_timestamp_str = row.get("datetime_est").isoformat()
+        
         features = {
             "signal": row.get("signal"),
             "conviction": row.get("conviction"),
@@ -44,7 +48,7 @@ def load_data_to_redis(df: pd.DataFrame, redis_client: redis.StrictRedis):
             # "sentiment_score": row.get("sentiment_score"),
             # "key_market_drivers": row.get("key_market_drivers"),
             # "risk_score": row.get("risk_score"),
-            "event_timestamp": row.get("datetime_est")
+            "event_timestamp": event_timestamp_str
         }
 
         # Extract asset_ticker and event_timestamp
@@ -57,16 +61,16 @@ def load_data_to_redis(df: pd.DataFrame, redis_client: redis.StrictRedis):
         #   - df_events.parquet has a datetime_est column with format %Y-%m-%d %H:%M:%S
         #     we must convert it to UNIX epoch.
         asset_ticker = "BTC"
-        # asset_ticker = row.get("asset_ticker")
         event_timestamp = row.get("datetime_est")
-        dt = datetime.strptime(event_timestamp, "%Y-%m-%d %H:%M:%S")
-        event_timestamp = int(dt.timestamp())
         
         # Check if asset_ticker and event_timestamp are not None
         if asset_ticker is None or event_timestamp is None:
             print(f"Skipping row with missing asset_ticker or event_timestamp: {row.to_dict()}")
             continue
 
+        # Convert the pandas Timestamp object to a Unix epoch timestamp (integer)
+        event_timestamp = int(event_timestamp.timestamp())
+        
         # Composite key: {asset_ticker}:{event_timestamp}
         composite_key = f"{asset_ticker}:{event_timestamp}"
 

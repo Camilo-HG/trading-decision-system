@@ -1,19 +1,20 @@
-# Start with a Python base image. Python 3.13 is used as requested.
-FROM python:3.13-slim-buster
+# Start with a Python base image. Python 3.12 is a stable version.
+FROM python:3.12-slim
 
 # Set the working directory inside the container
 WORKDIR /app
 
-# Install uv for dependency management
-RUN apt-get update && apt-get install -y curl && \
-    curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    ln -s /root/.cargo/bin/uv /usr/local/bin/uv && \
+# Install all system and Python dependencies in a single, robust step.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    curl \
+    build-essential \
+    libpq-dev \
+    && \
+    pip install --no-cache-dir \
+    fastapi uvicorn pandas pyarrow redis loguru prometheus-client jupyterlab uvloop httptools \
+    && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Copy the pyproject.toml file and install dependencies
-# We use a two-stage process for caching optimization
-COPY pyproject.toml .
-RUN uv sync
 
 # Copy the source code and data
 COPY src/ /app/src
@@ -27,4 +28,4 @@ HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
   CMD curl -f http://localhost:8000/health || exit 1
 
 # Command to run the FastAPI application with Uvicorn
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
