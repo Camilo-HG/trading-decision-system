@@ -1,112 +1,132 @@
-import os
-import time
 import json
-import logging
-from prometheus_client import start_http_server, Counter, Gauge, Histogram
-from fastapi import FastAPI, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
+import os
+from typing import Optional
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 from redis import Redis
-from loguru import logger
-import uvloop
+from redis.exceptions import ConnectionError
 
-# Set uvloop as the default event loop
-uvloop.install()
+# Pydantic models for request and response data
+class InsightResponse(BaseModel):
+    signal: str
+    conviction: float
+    causality: str
+    sentiment_score: float
+    key_market_drivers: str
+    risk_score: float
+    event_timestamp: str
 
-# --- Configuration ---
-REDIS_HOST = os.getenv("REDIS_HOST", "redis")
-REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
-PROMETHEUS_PORT = int(os.getenv("PROMETHEUS_PORT", 9000))
+class LatestEventResponse(BaseModel):
+    event_timestamp: str
 
-# --- Custom Logging ---
-# You can use a custom logger here or just a basic one for now
-# For this example, we'll use a simple setup with loguru
-logger.add("file.log", rotation="500 MB")
-
-# --- Prometheus Metrics ---
-# Counters to track total requests and cache hits/misses
-TOTAL_REQUESTS = Counter(
-    "fastapi_requests_total", "Total number of requests to the API"
-)
-CACHE_HITS = Counter("fastapi_cache_hits_total", "Total number of cache hits")
-CACHE_MISSES = Counter(
-    "fastapi_cache_misses_total", "Total number of cache misses"
-)
-
-# Gauge to monitor Redis connection status
-REDIS_CONNECTION_STATUS = Gauge(
-    "redis_connection_status", "Status of Redis connection (1=up, 0=down)"
-)
-
-# Histogram for request latency
-REQUEST_LATENCY = Histogram(
-    "fastapi_request_latency_seconds",
-    "API request latency in seconds",
-    buckets=[0.1, 0.5, 1.0, 2.5, 5.0, 10.0],
-)
-
-# --- FastAPI Application ---
 app = FastAPI()
 
-def get_redis_connection():
-    try:
-        redis_client = Redis(host=REDIS_HOST, port=REDIS_PORT, db=0)
-        redis_client.ping()
-        REDIS_CONNECTION_STATUS.set(1)
-        return redis_client
-    except Exception as e:
-        logger.error(f"Could not connect to Redis: {e}")
-        REDIS_CONNECTION_STATUS.set(0)
+# Redis connection
+redis_client: Optional[Redis] = None
+REDIS_CIRCUIT_BREAKER_OPEN = False
+REDIS_CIRCUIT_FAILURES = 0
+REDIS_MAX_FAILURES = 5
+
+def get_redis_client():
+    """Initializes and returns a Redis client with a simple circuit breaker."""
+    global redis_client, REDIS_CIRCUIT_BREAKER_OPEN
+    if REDIS_CIRCUIT_BREAKER_OPEN:
+        return None
+    if not redis_client:
+        redis_host = os.getenv("REDIS_HOST", "redis")
+        redis_port = int(os.getenv("REDIS_PORT", 6379))
+        try:
+            client = Redis(host=redis_host, port=redis_port, db=0, decode_responses=True)
+            client.ping()
+            redis_client = client
+        except ConnectionError as e:
+            print(f"Could not connect to Redis: {e}")
+            REDIS_CIRCUIT_BREAKER_OPEN = True
+            return None
+    return redis_client
+
+# Helper function to get the latest event timestamp
+def get_latest_event_timestamp(asset_ticker: str) -> str:
+    """
+    Performs a lookup in Redis for the latest event timestamp for a given asset.
+    """
+    redis_client = get_redis_client()
+    if not redis_client:
         raise HTTPException(
-            status_code=500, detail="Could not connect to Redis"
+            status_code=503,
+            detail="Redis cache service is unavailable."
         )
 
-# --- Middleware for request latency tracking ---
-@app.middleware("http")
-async def add_process_time_header(request: Request, call_next):
-    start_time = time.time()
-    response = await call_next(request)
-    process_time = time.time() - start_time
-    REQUEST_LATENCY.observe(process_time)
-    logger.info(
-        f"Request to {request.url.path} took {process_time:.4f}s",
-        extra={"request_path": request.url.path, "latency_seconds": process_time},
-    )
-    return response
+    try:
+        latest_timestamp = redis_client.get(f"latest_event:{asset_ticker}")
+        if not latest_timestamp:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No latest event found for asset: {asset_ticker}"
+            )
+        return latest_timestamp
+    except ConnectionError:
+        raise HTTPException(
+            status_code=503,
+            detail="Redis connection failed."
+        )
 
-# --- API Endpoints ---
-@app.get("/health")
-def health_check():
-    return {"status": "ok"}
+# API Endpoints
+@app.get("/{asset_ticker}/latest_event", response_model=LatestEventResponse)
+async def get_latest_event(asset_ticker: str):
+    """
+    Retrieves the latest event timestamp for a given asset ticker.
+    """
+    event_timestamp = get_latest_event_timestamp(asset_ticker)
+    return LatestEventResponse(event_timestamp=event_timestamp)
 
-@app.get("/metrics")
-def metrics():
-    return JSONResponse(content={}) # Placeholder as prometheus-client handles it
-
-@app.get("/decide/{asset_ticker}/{event_timestamp}")
-def get_decision(
-    asset_ticker: str,
-    event_timestamp: int,
-    redis_client: Redis = Depends(get_redis_connection),
-):
-    TOTAL_REQUESTS.inc()
-    cache_key = f"{asset_ticker}:{event_timestamp}"
+@app.get("/insights/{asset_ticker}", response_model=InsightResponse)
+async def get_insights(asset_ticker: str):
+    """
+    Retrieves the full pre-computed insight for a given asset ticker.
+    This endpoint uses the latest event timestamp to perform a second lookup.
+    """
+    redis_client = get_redis_client()
+    if not redis_client:
+        raise HTTPException(
+            status_code=503,
+            detail="Redis cache service is unavailable."
+        )
     
     try:
-        # Attempt to retrieve data from the cache
-        cached_data = redis_client.get(cache_key)
+        # Use the helper function to get the latest timestamp
+        latest_timestamp = get_latest_event_timestamp(asset_ticker)
+        
+        # Use the timestamp to get the full insight data
+        insight_key = f"{asset_ticker}:{latest_timestamp}"
+        insight_data_bytes = redis_client.get(insight_key)
+        
+        if not insight_data_bytes:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Insight data not found for key: {insight_key}"
+            )
+            
+        insight_data = json.loads(insight_data_bytes)
+        
+        return InsightResponse(**insight_data)
+        
+    except ConnectionError:
+        raise HTTPException(
+            status_code=503,
+            detail="Redis connection failed."
+        )
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=500,
+            detail="Error decoding JSON from Redis."
+        )
 
-        if cached_data:
-            CACHE_HITS.inc()
-            data = json.loads(cached_data)
-            logger.info(f"Cache hit for key: {cache_key}")
-            return data
-        else:
-            CACHE_MISSES.inc()
-            logger.warning(f"Cache miss for key: {cache_key}")
-            # In a real scenario, this is where a fallback to the slow-path
-            # or a synchronous re-computation would occur.
-            raise HTTPException(status_code=404, detail="Data not found in cache")
-
-    except Exception as e:
-        logger.error(f"Unhandled error: {e}", extra={"error": str(e)})
-        raise HTTPException(status_code=500, detail="Internal Server Error")
+# A simple health check for the service.
+@app.get("/health")
+def health_check():
+    """Health check endpoint for Docker Compose."""
+    client = get_redis_client()
+    redis_status = "ok" if client and client.ping() else "not_available"
+    return {"status": "ok", "redis": redis_status}
