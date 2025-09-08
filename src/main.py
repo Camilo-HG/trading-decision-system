@@ -3,6 +3,8 @@ import os
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import PlainTextResponse
+from prometheus_client import generate_latest
 from pydantic import BaseModel
 from redis import Redis
 from redis.exceptions import ConnectionError
@@ -93,7 +95,7 @@ async def get_insights(asset_ticker: str):
             status_code=503,
             detail="Redis cache service is unavailable."
         )
-    
+
     try:
         # Use the helper function to get the latest timestamp
         latest_timestamp = get_latest_event_timestamp(asset_ticker)
@@ -109,9 +111,6 @@ async def get_insights(asset_ticker: str):
             )
             
         insight_data = json.loads(insight_data_bytes)
-        
-        return InsightResponse(**insight_data)
-        
     except ConnectionError:
         raise HTTPException(
             status_code=503,
@@ -122,11 +121,23 @@ async def get_insights(asset_ticker: str):
             status_code=500,
             detail="Error decoding JSON from Redis."
         )
+    else:
+        return InsightResponse(**insight_data)
+
+# Metrics endpoint for Prometheus.
+@app.get("/metrics")
+def metrics():
+    """
+    Endpoint that exposes application metrics in Prometheus format.
+    """
+    return PlainTextResponse(content=generate_latest().decode("utf-8"))
 
 # A simple health check for the service.
 @app.get("/health")
 def health_check():
-    """Health check endpoint for Docker Compose."""
+    """
+    Health check endpoint for the service and Redis connection.
+    """
     client = get_redis_client()
     redis_status = "ok" if client and client.ping() else "not_available"
     return {"status": "ok", "redis": redis_status}

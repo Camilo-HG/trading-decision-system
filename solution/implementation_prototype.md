@@ -89,7 +89,7 @@ TODO: Solve this issue.
 
 - **Prometheus Service**
 
-  - `docker/prometheus.yml`: A configuration file for the Prometheus service.
+  - `prometheus.yml`: A configuration file for the Prometheus service.
   - `src/logging.py`: A file to set up structured logging with `loguru`.
 
 
