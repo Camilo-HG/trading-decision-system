@@ -128,8 +128,12 @@ async def get_insights(asset_ticker: str):
 @app.get("/insights/{asset_ticker}/{event_timestamp}", response_model=InsightResponse)
 async def get_insights(asset_ticker: str, event_timestamp: datetime):
     """
-    Retrieves the full pre-computed insight for a given asset ticker.
-    This endpoint uses the latest event timestamp to perform a second lookup.
+    Retrieves the full pre-computed insight for a given asset ticker and event timestamp.
+    This endpoint uses the provided event timestamp to perform a second lookup.
+
+    Notes:
+        - event_timestamp is expected to be in ISO 8601 format (e.g., '2023-10-01T12:00:00').
+        - Internally, Redis stores timestamps in Unix epoch format (integer).
     """
     redis_client = get_redis_client()
     if not redis_client:
@@ -137,9 +141,6 @@ async def get_insights(asset_ticker: str, event_timestamp: datetime):
             status_code=503,
             detail="Redis cache service is unavailable."
         )
-    
-    # Check the format of event_timestamp
-    # The API expects event_timestamp in format "%Y-%m-%d %H:%M:%S" (e.g., "2023-10-05 14:48:00")
 
     # Redis stores timestamps in Unix epoch timestamp (integer)
     # Change provided event_timestamp string to integer
